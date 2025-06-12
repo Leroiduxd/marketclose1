@@ -1,11 +1,23 @@
 import express from "express";
+import cors from "cors";
 import { ethers } from "ethers";
 import dotenv from "dotenv";
 import fetch from "node-fetch";
+
 dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 3000;
+
+// CORS middleware – autorise les requêtes depuis votre front (ici brokex.trade)
+app.use(cors({
+  origin: "https://brokex.trade",
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+}));
+
+// Pour parser le JSON dans le corps des requêtes
+app.use(express.json());
 
 const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS;
 const RPC_URL = process.env.RPC_URL;
@@ -38,11 +50,12 @@ const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
 const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
 const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, wallet);
 
-app.get("/confirm-close-all", async (req, res) => {
+app.post("/confirm-close-all", async (req, res) => {
   try {
-    const result = await contract.getAllCloseRequests();
-    const positionIds = result[0].map(id => Number(id));
-    const assetIndexes = result[1].map(index => Number(index));
+    // Récupère tous les requests de fermeture
+    const [rawPositionIds, rawAssetIndexes] = await contract.getAllCloseRequests();
+    const positionIds = rawPositionIds.map(id => id.toNumber());
+    const assetIndexes = rawAssetIndexes.map(idx => idx.toNumber());
 
     const responses = [];
 
@@ -51,15 +64,15 @@ app.get("/confirm-close-all", async (req, res) => {
       const index = assetIndexes[i];
 
       try {
+        // Appel à votre service de preuve
         const proofRes = await fetch("https://proof-production.up.railway.app/get-proof", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ index })
         });
+        const { proof_bytes: proof } = await proofRes.json();
 
-        const proofData = await proofRes.json();
-        const proof = proofData.proof_bytes;
-
+        // Confirme la fermeture sur la blockchain
         const tx = await contract.confirmClosePositionWithProof(positionId, proof);
         await tx.wait();
 
@@ -70,10 +83,13 @@ app.get("/confirm-close-all", async (req, res) => {
       }
     }
 
-    res.json({ closed: responses });
+    res.json({ results: responses });
   } catch (err) {
     console.error("Error confirming close requests:", err);
-    res.status(500).json({ error: "Failed to confirm close requests", details: err.message });
+    res.status(500).json({
+      error: "Failed to confirm close requests",
+      details: err.message
+    });
   }
 });
 
