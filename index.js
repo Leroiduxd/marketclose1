@@ -64,13 +64,17 @@ app.post("/confirm-close-all", async (req, res) => {
       const index = assetIndexes[i];
 
       try {
-        // Appel à votre service de preuve
+        // Appel au service de preuve
         const proofRes = await fetch("https://proof-production.up.railway.app/get-proof", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ index })
         });
-        const { proof_bytes: proof } = await proofRes.json();
+
+        const { proof_bytes } = await proofRes.json();
+
+        // Conversion du proof hex string en BytesLike
+        const proof = ethers.utils.arrayify(proof_bytes);
 
         // Confirme la fermeture sur la blockchain
         const tx = await contract.confirmClosePositionWithProof(positionId, proof);
@@ -96,3 +100,4 @@ app.post("/confirm-close-all", async (req, res) => {
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
 });
+
