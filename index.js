@@ -50,42 +50,31 @@ const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, wallet);
 
 console.log("🚀 ConfirmClose Executor:", wallet.address);
 
-// ✅ Endpoint de confirmation des fermetures
+// ✅ Endpoint principal
 app.post("/confirm-close-all", async (req, res) => {
   try {
-    const [rawPositionIds, rawAssetIndexes] = await contract.getAllCloseRequests();
+    const [rawPositionIds] = await contract.getAllCloseRequests();
     const positionIds = rawPositionIds.map(id => id.toNumber());
-    const assetIndexes = rawAssetIndexes.map(idx => idx.toNumber());
 
     const responses = [];
 
-    for (let i = 0; i < positionIds.length; i++) {
-      const positionId = positionIds[i];
-      const index = assetIndexes[i];
+    // ✅ On récupère une seule preuve partagée
+    const proofRes = await fetch("https://multiproof-production.up.railway.app/proof");
+    const { proof } = await proofRes.json();
+    const proofBytes = ethers.utils.arrayify(proof);
 
+    if (!proofBytes || proofBytes.length === 0) {
+      throw new Error("Empty or invalid multiproof");
+    }
+
+    for (let positionId of positionIds) {
       try {
         if (!positionId || positionId === 0) {
-          console.log(`⚠️ Skipping invalid position ID: ${positionId}`);
           responses.push({ positionId, status: "skipped", reason: "Invalid ID" });
           continue;
         }
 
-        const proofRes = await fetch("https://proof-production.up.railway.app/get-proof", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ index })
-        });
-
-        const { proof_bytes } = await proofRes.json();
-        const proof = ethers.utils.arrayify(proof_bytes);
-
-        if (!proof || proof.length === 0) {
-          throw new Error("Invalid or empty proof");
-        }
-
-        console.log(`🚀 Confirming close for position ${positionId}...`);
-
-        const tx = await contract.confirmClosePositionWithProof(positionId, proof, {
+        const tx = await contract.confirmClosePositionWithProof(positionId, proofBytes, {
           gasLimit: 800_000
         });
 
@@ -108,38 +97,25 @@ app.post("/confirm-close-all", async (req, res) => {
   }
 });
 
-// 🧪 Debug endpoint – vérifie si chaque positionId a un proof valide
+// 🔍 Endpoint de debug : affiche la validité de la preuve pour chaque position
 app.get("/debug-close", async (req, res) => {
   try {
-    const [rawPositionIds, rawAssetIndexes] = await contract.getAllCloseRequests();
+    const [rawPositionIds] = await contract.getAllCloseRequests();
     const positionIds = rawPositionIds.map(id => id.toNumber());
-    const assetIndexes = rawAssetIndexes.map(idx => idx.toNumber());
 
-    const results = [];
+    const proofRes = await fetch("https://multiproof-production.up.railway.app/proof");
+    const { proof } = await proofRes.json();
+    const proofBytes = ethers.utils.arrayify(proof);
 
-    for (let i = 0; i < positionIds.length; i++) {
-      const positionId = positionIds[i];
-      const index = assetIndexes[i];
-
-      try {
-        const proofRes = await fetch("https://proof-production.up.railway.app/get-proof", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ index })
-        });
-
-        const { proof_bytes } = await proofRes.json();
-        const proof = ethers.utils.arrayify(proof_bytes);
-
-        if (!proof || proof.length === 0) {
-          throw new Error("Proof is empty");
-        }
-
-        results.push({ positionId, index, status: "valid", proofLength: proof.length });
-      } catch (err) {
-        results.push({ positionId, index, status: "invalid", reason: err.message });
-      }
+    if (!proofBytes || proofBytes.length === 0) {
+      throw new Error("Proof is empty");
     }
+
+    const results = positionIds.map(positionId => ({
+      positionId,
+      status: "valid",
+      proofLength: proofBytes.length
+    }));
 
     res.json({ debug: results });
   } catch (err) {
