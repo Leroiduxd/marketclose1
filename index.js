@@ -50,16 +50,17 @@ const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, wallet);
 
 console.log("🚀 ConfirmClose Executor:", wallet.address);
 
-// ✅ Endpoint d'exécution
+// ➕ utilitaire d'attente
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+// ✅ Endpoint
 app.post("/confirm-close-all", async (req, res) => {
   try {
     const [rawPositionIds] = await contract.getAllCloseRequests();
     const positionIds = rawPositionIds.map(id => id.toNumber());
 
-    // ✅ On récupère une seule preuve partagée
     const proofRes = await fetch("https://multiproof-production.up.railway.app/proof");
-    const proofData = await proofRes.json();
-    const proof = proofData.proof;
+    const { proof } = await proofRes.json();
 
     if (!proof || !proof.startsWith("0x")) {
       throw new Error("Invalid or missing multiproof");
@@ -68,23 +69,37 @@ app.post("/confirm-close-all", async (req, res) => {
     const results = [];
 
     for (let positionId of positionIds) {
-      try {
-        if (!positionId || positionId === 0) {
-          results.push({ positionId, status: "skipped", reason: "Invalid ID" });
-          continue;
+      if (!positionId || positionId === 0) {
+        results.push({ positionId, status: "skipped", reason: "Invalid ID" });
+        continue;
+      }
+
+      let attempt = 0;
+      let success = false;
+
+      while (attempt < 15 && !success) {
+        try {
+          const tx = await contract.confirmClosePositionWithProof(positionId, proof, {
+            gasLimit: 800_000
+          });
+          await tx.wait();
+
+          console.log(`✅ Position ${positionId} closed. Tx: ${tx.hash}`);
+          results.push({ positionId, status: "closed", txHash: tx.hash });
+          success = true;
+        } catch (err) {
+          const reason = err.reason || err.message || "";
+          attempt++;
+
+          if (reason.includes("processing response error") && attempt < 15) {
+            console.log(`🔁 Retry ${attempt} for position ${positionId}`);
+            await sleep(1000);
+          } else {
+            console.warn(`❌ Failed to close position ${positionId}:`, reason);
+            results.push({ positionId, status: "failed", error: reason });
+            break;
+          }
         }
-
-        const tx = await contract.confirmClosePositionWithProof(positionId, proof, {
-          gasLimit: 800_000
-        });
-
-        await tx.wait();
-        console.log(`✅ Position ${positionId} closed. Tx: ${tx.hash}`);
-        results.push({ positionId, status: "closed", txHash: tx.hash });
-
-      } catch (err) {
-        console.warn(`❌ Position ${positionId} failed:`, err.reason || err.message);
-        results.push({ positionId, status: "failed", error: err.reason || err.message });
       }
     }
 
