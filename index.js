@@ -50,77 +50,49 @@ const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, wallet);
 
 console.log("🚀 ConfirmClose Executor:", wallet.address);
 
-// ✅ Endpoint principal
+// ✅ Endpoint d'exécution
 app.post("/confirm-close-all", async (req, res) => {
   try {
     const [rawPositionIds] = await contract.getAllCloseRequests();
     const positionIds = rawPositionIds.map(id => id.toNumber());
 
-    const responses = [];
-
     // ✅ On récupère une seule preuve partagée
     const proofRes = await fetch("https://multiproof-production.up.railway.app/proof");
-    const { proof } = await proofRes.json();
-    const proofBytes = ethers.utils.arrayify(proof);
+    const proofData = await proofRes.json();
+    const proof = proofData.proof;
 
-    if (!proofBytes || proofBytes.length === 0) {
-      throw new Error("Empty or invalid multiproof");
+    if (!proof || !proof.startsWith("0x")) {
+      throw new Error("Invalid or missing multiproof");
     }
+
+    const results = [];
 
     for (let positionId of positionIds) {
       try {
         if (!positionId || positionId === 0) {
-          responses.push({ positionId, status: "skipped", reason: "Invalid ID" });
+          results.push({ positionId, status: "skipped", reason: "Invalid ID" });
           continue;
         }
 
-        const tx = await contract.confirmClosePositionWithProof(positionId, proofBytes, {
+        const tx = await contract.confirmClosePositionWithProof(positionId, proof, {
           gasLimit: 800_000
         });
 
         await tx.wait();
         console.log(`✅ Position ${positionId} closed. Tx: ${tx.hash}`);
-        responses.push({ positionId, status: "closed", txHash: tx.hash });
+        results.push({ positionId, status: "closed", txHash: tx.hash });
+
       } catch (err) {
         console.warn(`❌ Position ${positionId} failed:`, err.reason || err.message);
-        responses.push({ positionId, status: "failed", error: err.reason || err.message });
+        results.push({ positionId, status: "failed", error: err.reason || err.message });
       }
     }
 
-    res.json({ results: responses });
+    res.json({ results });
   } catch (err) {
     console.error("🔥 Error during close execution:", err);
     res.status(500).json({
       error: "Failed to confirm close requests",
-      details: err.message
-    });
-  }
-});
-
-// 🔍 Endpoint de debug : affiche la validité de la preuve pour chaque position
-app.get("/debug-close", async (req, res) => {
-  try {
-    const [rawPositionIds] = await contract.getAllCloseRequests();
-    const positionIds = rawPositionIds.map(id => id.toNumber());
-
-    const proofRes = await fetch("https://multiproof-production.up.railway.app/proof");
-    const { proof } = await proofRes.json();
-    const proofBytes = ethers.utils.arrayify(proof);
-
-    if (!proofBytes || proofBytes.length === 0) {
-      throw new Error("Proof is empty");
-    }
-
-    const results = positionIds.map(positionId => ({
-      positionId,
-      status: "valid",
-      proofLength: proofBytes.length
-    }));
-
-    res.json({ debug: results });
-  } catch (err) {
-    res.status(500).json({
-      error: "Failed to debug close requests",
       details: err.message
     });
   }
