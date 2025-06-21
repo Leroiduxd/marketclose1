@@ -1,16 +1,17 @@
 {
-  "name": "close-requests-executor",
+  "name": "confirm-close-service",
   "version": "1.0.0",
+  "description": "Service to confirm position closures with multiproof on Brokex Protocol",
+  "main": "confirm-close-all.js",
   "type": "module",
-  "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node confirm-close-all.js"
   },
   "dependencies": {
-    "dotenv": "^16.4.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
     "ethers": "^5.7.2",
     "express": "^4.18.2",
-    "node-fetch": "^3.3.2",
-    "cors": "^2.8.5"
+    "node-fetch": "^2.6.7"
   }
 }
